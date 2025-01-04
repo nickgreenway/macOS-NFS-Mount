@@ -1,93 +1,127 @@
-Yes, you can use a shell script combined with launchd to automate the entire process, including creating the mount point (if necessary) and running the mount command. This approach is flexible and avoids relying on /etc/fstab, which macOS doesnt fully support in all cases.
+# Automating NFS Share Mount on macOS
 
-1. Create the Shell Script
-	1.	Open a text editor to create the script:
+You can use a shell script combined with `launchd` to automate the entire process, including creating the mount point (if necessary) and running the mount command. This approach is flexible and avoids relying on `/etc/fstab`, which macOS doesn't fully support in all cases.
 
-sudo nano /usr/local/bin/mount_europa.sh
+---
 
+## 1. Create the Shell Script
 
-	2.	Add the following script:
+1. Open a text editor to create the script:
 
-#!/bin/bash
+   ```bash
+   sudo nano /usr/local/bin/mount_europa.sh
+   ```
 
-# Mount point
-MOUNT_POINT="/Volumes/Europa"
-NFS_SERVER="10.0.0.4:/volume1/Europa"
+2. Add the following script:
 
-# Check if the mount point exists; create it if not
-if [ ! -d "$MOUNT_POINT" ]; then
-    mkdir -p "$MOUNT_POINT"
-fi
+   ```bash
+   #!/bin/bash
 
-# Check if already mounted; if not, mount the NFS share
-if ! mount | grep -q "$MOUNT_POINT"; then
-    mount -t nfs -o rw,hard,intr,proto=tcp,rsize=65536,wsize=65536,nfsvers=4 "$NFS_SERVER" "$MOUNT_POINT"
-fi
+   # Mount point
+   MOUNT_POINT="/Volumes/Europa"
+   NFS_SERVER="10.0.0.4:/volume1/Europa"
 
+   # Check if the mount point exists; create it if not
+   if [ ! -d "$MOUNT_POINT" ]; then
+       mkdir -p "$MOUNT_POINT"
+   fi
 
-	3.	Save and exit (CTRL + O, then CTRL + X).
-	4.	Make the script executable:
+   # Check if already mounted; if not, mount the NFS share
+   if ! mount | grep -q "$MOUNT_POINT"; then
+       mount -t nfs -o rw,hard,intr,proto=tcp,rsize=65536,wsize=65536,nfsvers=4 "$NFS_SERVER" "$MOUNT_POINT"
+   fi
+   ```
 
-sudo chmod +x /usr/local/bin/mount_europa.sh
+3. Save and exit (`CTRL + O`, then `CTRL + X`).
 
-2. Create a launchd Job
-	1.	Create the launchd plist file:
+4. Make the script executable:
 
-sudo nano /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
+   ```bash
+   sudo chmod +x /usr/local/bin/mount_europa.sh
+   ```
 
+---
 
-	2.	Add the following content to the plist file:
+## 2. Create a `launchd` Job
 
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.nickgreenway.mount_europa</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/mount_europa.sh</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-</dict>
-</plist>
+1. Create the `launchd` plist file:
 
+   ```bash
+   sudo nano /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
+   ```
 
-	3.	Save and exit (CTRL + O, then CTRL + X).
-	4.	Set the correct permissions for the plist:
+2. Add the following content to the plist file:
 
-sudo chmod 644 /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <plist version="1.0">
+   <dict>
+       <key>Label</key>
+       <string>com.nickgreenway.mount_europa</string>
+       <key>ProgramArguments</key>
+       <array>
+           <string>/usr/local/bin/mount_europa.sh</string>
+       </array>
+       <key>RunAtLoad</key>
+       <true/>
+       <key>KeepAlive</key>
+       <false/>
+   </dict>
+   </plist>
+   ```
 
+3. Save and exit (`CTRL + O`, then `CTRL + X`).
 
-	5.	Load the launchd job:
+4. Set the correct permissions for the plist:
 
-sudo launchctl load /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
+   ```bash
+   sudo chmod 644 /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
+   ```
 
-3. Test the Setup
-	1.	Unmount the share if its already mounted:
+5. Load the `launchd` job:
 
-sudo umount /Volumes/Europa
+   ```bash
+   sudo launchctl load /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
+   ```
 
+---
 
-	2.	Trigger the launchd job manually:
+## 3. Test the Setup
 
-sudo launchctl start com.nickgreenway.mount_europa
+1. Unmount the share if it's already mounted:
 
+   ```bash
+   sudo umount /Volumes/Europa
+   ```
 
-	3.	Verify the mount:
+2. Trigger the `launchd` job manually:
 
-mount | grep Europa
+   ```bash
+   sudo launchctl start com.nickgreenway.mount_europa
+   ```
 
-4. Reboot and Verify
+3. Verify the mount:
+
+   ```bash
+   mount | grep Europa
+   ```
+
+---
+
+## 4. Reboot and Verify
 
 Reboot your Mac and confirm that the NFS share mounts automatically:
 
+```bash
 sudo reboot
+```
 
 After the system starts, check if the share is mounted:
 
+```bash
 mount | grep Europa
+```
+
+---
 
 This method ensures the NFS share is mounted at startup without manual intervention. Let me know if you need any further help!
