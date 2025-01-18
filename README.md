@@ -28,7 +28,7 @@ You can use a shell script combined with `launchd` to automate the entire proces
 
    # Check if already mounted; if not, mount the NFS share
    if ! mount | grep -q "$MOUNT_POINT"; then
-       mount -t nfs -o rw,hard,intr,proto=tcp,rsize=65536,wsize=65536,nfsvers=4 "$NFS_SERVER" "$MOUNT_POINT"
+       mount -t nfs -o rw,noowners,nolock,hard,intr,proto=tcp,rsize=32768,wsize=32768,nfsvers=3 "$NFS_SERVER" "$MOUNT_POINT"
    fi
    ```
 
