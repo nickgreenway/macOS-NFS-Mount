@@ -1,5 +1,58 @@
 # Reliable NFS mounts on macOS
 
+## AI agent: one-shot installation prompt
+
+Copy the prompt below into your coding agent, fill in the two input lines, and
+let the agent handle the installation and verification. A human may still need
+to enter an administrator password when macOS prompts for `sudo`.
+
+```text
+Install the latest version of https://github.com/nickgreenway/macOS-NFS-Mount
+and configure it completely on the specified target Mac.
+
+Target Mac: <hostname, SSH host, IP address, or "this Mac">
+Known-good manual mount command: <paste the full `sudo mount -t nfs ...` command>
+
+Work autonomously and do not stop for questions when those inputs contain the
+needed values. Follow these requirements:
+
+1. Verify the exact target Mac before making changes with `scutil --get
+   ComputerName` and `sw_vers`. Do not assume the agent's current machine is the
+   target. If the target is remote, use SSH and keep all system changes on that
+   target.
+2. Inspect `mount -t nfs`, the existing `com.github.macos-nfs-mount` launchd
+   service, and relevant installed files read-only. Do not enumerate or read
+   files inside an active NFS mount.
+3. Clone or fast-forward the repository in the target user's home directory.
+   Preserve unrelated files and local changes; never reset or overwrite a dirty
+   checkout.
+4. Parse `NFS_SOURCE`, `MOUNT_POINT`, and `MOUNT_OPTIONS` from the known-good
+   command. Preserve its working options and append `retrycnt=0` if it is not
+   already present, so a failed boot-time connection returns promptly and
+   launchd can retry.
+5. Write those values only to `config.local`, set it to mode 0600, and verify
+   Git ignores it. Never commit, push, or place the real server address, export,
+   mount path, credentials, or other site-specific infrastructure in tracked
+   files.
+6. Run `./tests/test.sh` and `./bin/macos-nfs-mount --check ./config.local`.
+   Stop on a failed validation rather than partially installing.
+7. If the exact expected NFS export is already mounted at the target path, do
+   not unmount or remount it. Install with `sudo ./install.sh --config
+   ./config.local`; the installer is designed to leave a matching active mount
+   intact. Never reboot unless the user explicitly authorizes it.
+8. If interactive sudo authentication is required, stage everything first and
+   give the user one exact command to run. Never ask the user to send a password
+   through chat. Continue verification after they run it.
+9. Verify the loaded system LaunchDaemon with `launchctl print
+   system/com.github.macos-nfs-mount`, including a 60-second run interval and a
+   successful exit. Verify the exact mount with `mount -t nfs` and `nfsstat -m`,
+   and verify `/etc/macos-nfs-mount.conf` is owned by root:wheel with mode 0600.
+10. Report separately what is installed and live now versus what is proven only
+    after a reboot. If the user later reboots, confirm the new boot time, the
+    expected NFS mount, a successful daemon run, and a second successful
+    scheduled check before declaring startup mounting proven.
+```
+
 This project installs a small root-owned `launchd` service that mounts an NFS
 export after startup and retries when the Mac starts before the network or NFS
 server is ready.
