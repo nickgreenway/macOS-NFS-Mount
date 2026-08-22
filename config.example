@@ -1,0 +1,5 @@
+# Copy this file to config.local and replace the fictional values below.
+# config.local is ignored by Git.
+NFS_SOURCE=nas.example.net:/exports/media
+MOUNT_POINT=/Volumes/NAS/media
+MOUNT_OPTIONS=vers=3,resvport,hard,rw,nfc,rsize=65536,wsize=65536,timeo=600,retrycnt=0

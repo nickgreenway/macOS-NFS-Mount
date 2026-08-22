@@ -1,127 +1,140 @@
-# Automating NFS Share Mount on macOS
+# Reliable NFS mounts on macOS
 
-You can use a shell script combined with `launchd` to automate the entire process, including creating the mount point (if necessary) and running the mount command. This approach is flexible and avoids relying on `/etc/fstab`, which macOS doesn't fully support in all cases.
+This project installs a small root-owned `launchd` service that mounts an NFS
+export after startup and retries when the Mac starts before the network or NFS
+server is ready.
 
----
+The repository contains no site-specific addresses or paths. Your NFS server,
+export, mount point, and options live in a local configuration file that is
+ignored by Git and is installed on the Mac as `/etc/macos-nfs-mount.conf` with
+mode `0600`.
 
-## 1. Create the Shell Script
+## Why the old version was unreliable
 
-1. Open a text editor to create the script:
+The original LaunchDaemon used `RunAtLoad` by itself. That gives the mount one
+chance during boot. If networking or the NFS server is not ready at that exact
+moment, the command fails and is never attempted again.
 
-   ```bash
-   sudo nano /usr/local/bin/mount_europa.sh
-   ```
+The current service:
 
-2. Add the following script:
+- runs once when loaded and retries every 60 seconds;
+- exits immediately when the expected export is already mounted;
+- refuses to mount over a different filesystem at the configured path;
+- uses absolute executable paths, which `launchd` jobs need;
+- keeps private infrastructure values out of the public repository; and
+- uses current `launchctl bootstrap` and `kickstart` commands.
 
-   ```bash
-   #!/bin/bash
+## Requirements
 
-   # Mount point
-   MOUNT_POINT="/Volumes/Europa"
-   NFS_SERVER="10.0.0.4:/volume1/Europa"
+- macOS with NFS client support
+- an NFS export reachable from the Mac
+- an administrator account (`resvport` mounts require root)
 
-   # Check if the mount point exists; create it if not
-   if [ ! -d "$MOUNT_POINT" ]; then
-       mkdir -p "$MOUNT_POINT"
-   fi
+## Install
 
-   # Check if already mounted; if not, mount the NFS share
-   if ! mount | grep -q "$MOUNT_POINT"; then
-       mount -t nfs -o rw,noowners,nolock,hard,intr,proto=tcp,rsize=32768,wsize=32768,nfsvers=3 "$NFS_SERVER" "$MOUNT_POINT"
-   fi
-   ```
+Clone the repository, then make a private local configuration:
 
-3. Save and exit (`CTRL + O`, then `CTRL + X`).
-
-4. Make the script executable:
-
-   ```bash
-   sudo chmod +x /usr/local/bin/mount_europa.sh
-   ```
-
----
-
-## 2. Create a `launchd` Job
-
-1. Create the `launchd` plist file:
-
-   ```bash
-   sudo nano /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
-   ```
-
-2. Add the following content to the plist file:
-
-   ```xml
-   <?xml version="1.0" encoding="UTF-8"?>
-   <plist version="1.0">
-   <dict>
-       <key>Label</key>
-       <string>com.nickgreenway.mount_europa</string>
-       <key>ProgramArguments</key>
-       <array>
-           <string>/usr/local/bin/mount_europa.sh</string>
-       </array>
-       <key>RunAtLoad</key>
-       <true/>
-       <key>KeepAlive</key>
-       <false/>
-   </dict>
-   </plist>
-   ```
-
-3. Save and exit (`CTRL + O`, then `CTRL + X`).
-
-4. Set the correct permissions for the plist:
-
-   ```bash
-   sudo chmod 644 /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
-   ```
-
-5. Load the `launchd` job:
-
-   ```bash
-   sudo launchctl load /Library/LaunchDaemons/com.nickgreenway.mount_europa.plist
-   ```
-
----
-
-## 3. Test the Setup
-
-1. Unmount the share if it's already mounted:
-
-   ```bash
-   sudo umount /Volumes/Europa
-   ```
-
-2. Trigger the `launchd` job manually:
-
-   ```bash
-   sudo launchctl start com.nickgreenway.mount_europa
-   ```
-
-3. Verify the mount:
-
-   ```bash
-   mount | grep Europa
-   ```
-
----
-
-## 4. Reboot and Verify
-
-Reboot your Mac and confirm that the NFS share mounts automatically:
-
-```bash
-sudo reboot
+```sh
+git clone https://github.com/nickgreenway/macOS-NFS-Mount.git
+cd macOS-NFS-Mount
+cp config.example config.local
+chmod 600 config.local
 ```
 
-After the system starts, check if the share is mounted:
+Edit `config.local`:
 
-```bash
-mount | grep Europa
+```ini
+NFS_SOURCE=nas.example.net:/exports/media
+MOUNT_POINT=/Volumes/NAS/media
+MOUNT_OPTIONS=vers=3,resvport,hard,rw,nfc,rsize=65536,wsize=65536,timeo=600,retrycnt=0
 ```
 
----
+Use the same source, mount point, and options that work with your manual
+`mount -t nfs` command. `retrycnt=0` limits a failed initial connection attempt
+so the LaunchDaemon can try again on its next interval rather than remaining
+stuck for a long time.
 
-This method ensures the NFS share is mounted at startup without manual intervention. Let me know if you need any further help!
+Validate and install:
+
+```sh
+./bin/macos-nfs-mount --check ./config.local
+sudo ./install.sh --config ./config.local
+```
+
+The installer does not unmount an active share. It installs the service and
+asks it to run; if the expected share is already mounted, the service exits
+successfully without changing it.
+
+## Verify
+
+Inspect the service:
+
+```sh
+sudo launchctl print system/com.github.macos-nfs-mount
+```
+
+Inspect active NFS mounts and their negotiated options:
+
+```sh
+mount -t nfs
+nfsstat -m
+```
+
+Inspect recent service messages:
+
+```sh
+log show --last 10m --predicate 'senderImagePath ENDSWITH "/logger" AND eventMessage CONTAINS "macos-nfs-mount"'
+```
+
+After a reboot, the mount may take up to 60 seconds to appear if the first
+attempt happens before the network or server is ready.
+
+## Update an installation
+
+Pull the repository and run the installer again. The root-owned configuration
+is replaced only by the file you explicitly pass with `--config`.
+
+```sh
+git pull --ff-only
+sudo ./install.sh --config ./config.local
+```
+
+## Uninstall
+
+```sh
+sudo ./uninstall.sh
+```
+
+This unloads the LaunchDaemon and removes the installed script and plist. It
+preserves `/etc/macos-nfs-mount.conf` by default and does not unmount an active
+share. To remove the installed configuration too, use:
+
+```sh
+sudo ./uninstall.sh --remove-config
+```
+
+## Privacy and public repositories
+
+Private RFC1918 addresses such as `10.x.x.x` are not directly reachable from
+the public internet, but publishing them can still reveal network layout,
+hostnames, exports, and naming conventions. Keep those values in
+`config.local`, which this repository ignores, and commit only
+`config.example` with fictional values.
+
+Before every public commit, run:
+
+```sh
+./tests/test.sh
+git diff --cached
+```
+
+The test suite includes a guard against accidentally committing the original
+author's current infrastructure values. Remember that deleting a value in a
+later commit does not remove it from existing Git history.
+
+## NFS safety note
+
+`hard` mounts prioritize data integrity, but file operations can wait
+indefinitely while the server is unavailable. That is usually appropriate for
+writable media, but it can also make applications appear hung during an NFS
+outage. Choose mount options deliberately for your workload.

@@ -1,0 +1,2 @@
+# Site-specific NFS configuration. Never commit this file.
+/config.local

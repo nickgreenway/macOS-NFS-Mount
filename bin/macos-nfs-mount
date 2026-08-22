@@ -1,0 +1,115 @@
+#!/bin/sh
+
+set -eu
+
+LABEL="macos-nfs-mount"
+DEFAULT_CONFIG="/etc/macos-nfs-mount.conf"
+
+log_message() {
+    message=$1
+    /usr/bin/logger -t "$LABEL" -- "$message" 2>/dev/null || true
+    printf '%s: %s\n' "$LABEL" "$message" >&2
+}
+
+fail() {
+    log_message "ERROR: $1"
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+Usage:
+  macos-nfs-mount [CONFIG_FILE]
+  macos-nfs-mount --check [CONFIG_FILE]
+
+CONFIG_FILE defaults to /etc/macos-nfs-mount.conf.
+EOF
+}
+
+config_value() {
+    key=$1
+    /usr/bin/awk -v key="$key" '
+        index($0, key "=") == 1 {
+            count++
+            value = substr($0, length(key) + 2)
+        }
+        END {
+            if (count != 1 || value == "") {
+                exit 1
+            }
+            print value
+        }
+    ' "$CONFIG_PATH"
+}
+
+validate_config() {
+    [ -f "$CONFIG_PATH" ] || fail "Configuration not found: $CONFIG_PATH"
+
+    NFS_SOURCE=$(config_value NFS_SOURCE) || fail "NFS_SOURCE must appear exactly once and have a value"
+    MOUNT_POINT=$(config_value MOUNT_POINT) || fail "MOUNT_POINT must appear exactly once and have a value"
+    MOUNT_OPTIONS=$(config_value MOUNT_OPTIONS) || fail "MOUNT_OPTIONS must appear exactly once and have a value"
+
+    case "$NFS_SOURCE" in
+        *:/*) ;;
+        *) fail "NFS_SOURCE must look like host:/absolute/export/path" ;;
+    esac
+
+    case "$MOUNT_POINT" in
+        /*) ;;
+        *) fail "MOUNT_POINT must be an absolute path" ;;
+    esac
+
+    case "$MOUNT_OPTIONS" in
+        -*|*[[:space:]]*) fail "MOUNT_OPTIONS must be a comma-separated list without whitespace or a leading dash" ;;
+        *) ;;
+    esac
+}
+
+CHECK_ONLY=false
+case "${1:-}" in
+    --check)
+        CHECK_ONLY=true
+        CONFIG_PATH=${2:-$DEFAULT_CONFIG}
+        [ "$#" -le 2 ] || { usage >&2; exit 64; }
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    -*)
+        usage >&2
+        exit 64
+        ;;
+    *)
+        CONFIG_PATH=${1:-$DEFAULT_CONFIG}
+        [ "$#" -le 1 ] || { usage >&2; exit 64; }
+        ;;
+esac
+
+validate_config
+
+if [ "$CHECK_ONLY" = true ]; then
+    printf 'Valid configuration for %s on %s\n' "$NFS_SOURCE" "$MOUNT_POINT"
+    exit 0
+fi
+
+mounted_line=$(/sbin/mount | /usr/bin/awk -v marker=" on $MOUNT_POINT (" 'index($0, marker) { print; exit }')
+if [ -n "$mounted_line" ]; then
+    expected="$NFS_SOURCE on $MOUNT_POINT (nfs"
+    case "$mounted_line" in
+        "$expected"*) exit 0 ;;
+        *) fail "Mount point is already occupied by: $mounted_line" ;;
+    esac
+fi
+
+[ "$(/usr/bin/id -u)" -eq 0 ] || fail "Run this mount service as root"
+
+/bin/mkdir -p "$MOUNT_POINT"
+log_message "Mounting $NFS_SOURCE on $MOUNT_POINT"
+
+if /sbin/mount -t nfs -o "$MOUNT_OPTIONS" "$NFS_SOURCE" "$MOUNT_POINT"; then
+    log_message "Mounted $NFS_SOURCE on $MOUNT_POINT"
+else
+    status=$?
+    fail "Mount attempt failed with exit status $status; launchd will retry"
+fi
